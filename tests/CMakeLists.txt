@@ -167,6 +167,10 @@ if(UNIX AND (HAVE_PTHREAD_SETNAME_NP OR HAVE_PTHREAD_SET_NAME_NP) AND (HAVE_PTHR
   list(APPEND DISPATCH_C_TESTS
        thread_name)
 endif()
+if(UNIX)
+  list(APPEND DISPATCH_C_TESTS
+       source_eof)
+endif()
 if(APPLE)
   list(APPEND DISPATCH_C_TESTS
        deadname

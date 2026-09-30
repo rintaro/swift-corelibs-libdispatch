@@ -557,10 +557,11 @@ _dispatch_event_merge_hangup(dispatch_unote_t du)
 {
 	// consumed by dux_merge_evt()
 	_dispatch_retain_unote_owner(du);
-	dispatch_unote_state_t du_state = _dispatch_unote_state(du);
-	du_state |= DU_STATE_NEEDS_DELETE;
-	du_state &= ~DU_STATE_ARMED;
-	_dispatch_unote_state_set(du, du_state);
+	// Muxnotes are only safe to mutate from the manager thread, so the unote
+	// is unregistered here rather than being marked DU_STATE_NEEDS_DELETE,
+	// which would let the source unregister it from its target queue.
+	// Unregistering the last unote of the muxnote disposes of it.
+	_dispatch_unote_unregister_muxed(du);
 	uintptr_t data = 0;  // EOF
 	os_atomic_store2o(du._dr, ds_pending_data, ~data, relaxed);
 	dux_merge_evt(du._du, EV_DELETE|EV_DISPATCH, data, 0);
@@ -602,15 +603,19 @@ _dispatch_event_merge_fd(dispatch_muxnote_t dmn, uint32_t events)
 
 	// SR-9033: EPOLLHUP is an unmaskable event which we must respond to
 	if (events & EPOLLHUP) {
+		// dmn is freed once its last unote is unregistered, so it must not
+		// be accessed after that.
+		bool has_writers = !LIST_EMPTY(&dmn->dmn_writers_head);
 		LIST_FOREACH_SAFE(dul, &dmn->dmn_readers_head, du_link, dul_next) {
 			dispatch_unote_t du = _dispatch_unote_linkage_get_unote(dul);
 			_dispatch_event_merge_hangup(du);
 		}
-		LIST_FOREACH_SAFE(dul, &dmn->dmn_writers_head, du_link, dul_next) {
-			dispatch_unote_t du = _dispatch_unote_linkage_get_unote(dul);
-			_dispatch_event_merge_hangup(du);
+		if (has_writers) {
+			LIST_FOREACH_SAFE(dul, &dmn->dmn_writers_head, du_link, dul_next) {
+				dispatch_unote_t du = _dispatch_unote_linkage_get_unote(dul);
+				_dispatch_event_merge_hangup(du);
+			}
 		}
-		epoll_ctl(_dispatch_epfd, EPOLL_CTL_DEL, dmn->dmn_fd, NULL);
 		return;
 	}
 
